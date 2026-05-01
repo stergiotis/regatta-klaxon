@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#440154">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Klaxon">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="stylesheet" href="style.css">
+  <title>Klaxon &mdash; Regatta Timer</title>
+</head>
+<body>
+  <main id="app" class="phase-idle" data-phase="idle">
+    <div class="status" id="status" aria-live="polite"></div>
+    <div class="time" id="time" role="timer" aria-live="off">5:00</div>
+    <div class="phase" id="phase">Ready</div>
+
+    <div class="controls">
+      <button id="primary" class="btn-primary" type="button">Start</button>
+      <div class="adjust">
+        <button id="minus" class="btn-secondary" type="button" aria-label="Subtract one minute">&minus;1 min</button>
+        <button id="plus" class="btn-secondary" type="button" aria-label="Add one minute">+1 min</button>
+      </div>
+      <button id="reset" class="btn-tertiary" type="button">Reset</button>
+    </div>
+
+    <details class="settings" id="settings">
+      <summary>Settings</summary>
+      <fieldset>
+        <legend>Sequence</legend>
+        <label><input type="radio" name="seq" value="3"> 3 min</label>
+        <label><input type="radio" name="seq" value="5" checked> 5 min</label>
+        <label><input type="radio" name="seq" value="6"> 6 min</label>
+      </fieldset>
+      <label class="toggle">
+        <input type="checkbox" id="sound-toggle" checked>
+        <span>Beep at signals</span>
+      </label>
+      <label class="toggle">
+        <input type="checkbox" id="shake-toggle">
+        <span>Shake to sync</span>
+      </label>
+      <label class="toggle">
+        <input type="checkbox" id="audio-toggle">
+        <span>Listen for horn</span>
+      </label>
+      <p class="hint">Sync snaps the countdown to the nearest whole minute &mdash; tap the Sync button, shake the device, or play a horn when the official signal sounds.</p>
+    </details>
+  </main>
+  <script src="app.js" type="module"></script>
+</body>
+</html>

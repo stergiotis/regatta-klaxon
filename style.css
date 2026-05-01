@@ -1,0 +1,261 @@
+:root {
+  --v0: #440154;
+  --v1: #3b528b;
+  --v2: #21918c;
+  --v3: #5ec962;
+  --v4: #fde725;
+  --bg: var(--v0);
+  --fg: var(--v4);
+  --fg-dim: rgba(253, 231, 37, 0.6);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#app {
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding-top: env(safe-area-inset-top);
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  transition: background-color 0.4s ease, color 0.4s ease;
+}
+
+.status {
+  font-size: 0.85rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  opacity: 0.5;
+  padding-top: 1rem;
+  min-height: 1.5em;
+  text-align: center;
+}
+
+.time {
+  font-size: clamp(5.5rem, 30vw, 18rem);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  margin-top: 4vh;
+  text-shadow: 0 0 60px rgba(0, 0, 0, 0.25);
+}
+
+.time.negative::before {
+  content: "+";
+  font-weight: 400;
+  opacity: 0.6;
+  margin-right: 0.05em;
+}
+
+.phase {
+  font-size: clamp(0.9rem, 3.5vw, 1.25rem);
+  text-transform: uppercase;
+  letter-spacing: 0.35em;
+  opacity: 0.65;
+  margin-top: 1rem;
+  text-align: center;
+}
+
+.controls {
+  width: 100%;
+  max-width: 600px;
+  padding: 0 5vw;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: auto;
+}
+
+button {
+  font-family: inherit;
+  font-size: clamp(1.1rem, 4.5vw, 1.75rem);
+  font-weight: 600;
+  border: none;
+  border-radius: 1rem;
+  padding: 1.4rem 1rem;
+  cursor: pointer;
+  transition: transform 0.08s ease, opacity 0.2s ease, background-color 0.2s ease;
+  touch-action: manipulation;
+  color: inherit;
+}
+
+button:active { transform: scale(0.97); }
+button:disabled { opacity: 0.35; cursor: default; }
+button:disabled:active { transform: none; }
+
+.btn-primary {
+  background: var(--v4);
+  color: var(--v0);
+  font-size: clamp(1.6rem, 7vw, 2.5rem);
+  padding: 1.8rem 1rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.btn-secondary {
+  background: rgba(253, 231, 37, 0.12);
+  color: var(--fg);
+  border: 2px solid rgba(253, 231, 37, 0.25);
+  flex: 1;
+}
+
+.btn-tertiary {
+  background: transparent;
+  color: var(--fg-dim);
+  border: 1px solid rgba(253, 231, 37, 0.18);
+  font-size: 0.95rem;
+  padding: 0.85rem;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.adjust {
+  display: flex;
+  gap: 0.75rem;
+}
+
+/* phase-driven color theming */
+.phase-idle    { background: var(--v0); color: var(--v4); }
+.phase-far     { background: var(--v1); color: var(--v4); }
+.phase-mid     { background: var(--v2); color: var(--v4); }
+.phase-close   { background: var(--v3); color: var(--v0); }
+.phase-final   { background: var(--v4); color: var(--v0); }
+.phase-racing  { background: var(--v2); color: var(--v4); }
+
+.phase-close .btn-primary,
+.phase-final .btn-primary {
+  background: var(--v0);
+  color: var(--v4);
+}
+
+.phase-close .btn-secondary,
+.phase-final .btn-secondary {
+  background: rgba(68, 1, 84, 0.15);
+  color: var(--v0);
+  border-color: rgba(68, 1, 84, 0.35);
+}
+
+.phase-close .btn-tertiary,
+.phase-final .btn-tertiary {
+  color: rgba(68, 1, 84, 0.7);
+  border-color: rgba(68, 1, 84, 0.25);
+}
+
+.phase-final .time {
+  animation: pulse 0.5s ease-in-out infinite alternate;
+}
+
+@keyframes pulse {
+  from { opacity: 1; transform: scale(1); }
+  to   { opacity: 0.6; transform: scale(0.97); }
+}
+
+/* settings */
+.settings {
+  width: 100%;
+  max-width: 600px;
+  padding: 1.5rem 5vw 2rem;
+  font-size: 0.95rem;
+}
+
+.settings summary {
+  cursor: pointer;
+  opacity: 0.55;
+  padding: 0.5rem 0;
+  list-style: none;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  font-size: 0.8rem;
+}
+.settings summary::-webkit-details-marker { display: none; }
+.settings summary::before {
+  content: "▸ ";
+  display: inline-block;
+  transition: transform 0.2s ease;
+}
+.settings[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.settings fieldset {
+  border: 1px solid currentColor;
+  border-color: rgba(253, 231, 37, 0.18);
+  border-radius: 0.6rem;
+  padding: 0.75rem 1rem;
+  margin: 1rem 0;
+  opacity: 0.85;
+}
+
+.settings legend {
+  padding: 0 0.5rem;
+  opacity: 0.7;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+}
+
+.settings label {
+  display: inline-block;
+  margin-right: 1rem;
+  padding: 0.4rem 0;
+}
+
+.toggle {
+  display: flex !important;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.7rem 0;
+  margin-right: 0 !important;
+}
+
+input[type="checkbox"], input[type="radio"] {
+  width: 1.25rem;
+  height: 1.25rem;
+  accent-color: var(--v4);
+  cursor: pointer;
+}
+
+.phase-close input, .phase-final input {
+  accent-color: var(--v0);
+}
+
+.hint {
+  font-size: 0.85rem;
+  opacity: 0.55;
+  margin-top: 1rem;
+  line-height: 1.5;
+}
+
+/* a brief flash when sync fires */
+.sync-flash {
+  animation: flash 0.4s ease-out;
+}
+
+@keyframes flash {
+  0%   { box-shadow: inset 0 0 0 0 rgba(255, 255, 255, 0.6); }
+  30%  { box-shadow: inset 0 0 0 100vmax rgba(255, 255, 255, 0.35); }
+  100% { box-shadow: inset 0 0 0 100vmax rgba(255, 255, 255, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .phase-final .time { animation: none; }
+  .sync-flash { animation: none; }
+  #app { transition: none; }
+}
