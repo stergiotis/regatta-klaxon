@@ -40,7 +40,7 @@ PHRASES: dict[str, str] = {
     "sec_3":    "Three.",
     "sec_2":    "Two.",
     "sec_1":    "One.",
-    "go":       "Go!",
+    "go":       "Read with enthusiasm and emphasis, like a starter at a race: Race started!",
     "sync":     "Sync.",
 }
 
