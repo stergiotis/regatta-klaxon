@@ -115,9 +115,13 @@ function beep({ freq = 880, duration = 0.15, volume = 0.4, type = 'sine' } = {})
 function vibrate(pattern) {
   if (navigator.vibrate) navigator.vibrate(pattern);
 }
-// Spoken cues: pre-rendered MP3 files. Each Audio element is preloaded once
-// and reused so playback is low-latency. Falls back to a synthesized beep if
-// the file is unavailable (e.g. before the service worker has cached it).
+// Spoken cues: pre-rendered MP3 files decoded once into Web Audio buffers.
+// Playing via AudioBufferSourceNode avoids the HTMLAudioElement quirks that
+// caused intermittent silent shake-to-sync triggers on iOS — there's no
+// per-element gesture unlock, no pause/play race when cues fire close
+// together, and each play creates a fresh source node. Only the
+// AudioContext itself needs unlocking (handled by ensureAudio on first
+// gesture, the same as the chirp fallback already relies on).
 const speechSrc = {
   m6: 'audio/minute_6.mp3', m5: 'audio/minute_5.mp3',
   m4: 'audio/minute_4.mp3', m3: 'audio/minute_3.mp3',
@@ -129,47 +133,28 @@ const speechSrc = {
   s2:  'audio/sec_2.mp3',   s1: 'audio/sec_1.mp3',
   go:  'audio/go.mp3',     sync: 'audio/sync.mp3',
 };
-const speech = {};
-function preloadSpeech() {
-  for (const [k, src] of Object.entries(speechSrc)) {
-    const a = new Audio(src);
-    a.preload = 'auto';
-    speech[k] = a;
-  }
-}
-
-// iOS Safari requires a user gesture to unlock each <audio> individually.
-// On the first user interaction we briefly play every element muted, which
-// primes them so later programmatic calls actually produce sound. Without
-// this, only the cue triggered in the gesture handler itself (minute_5 in
-// start()) plays, and subsequent ticks (sec_10 ... sec_1, minute_4 ... 1)
-// silently no-op because their Audio elements were never primed.
-let speechUnlocked = false;
-function unlockSpeech() {
-  if (speechUnlocked) return;
-  speechUnlocked = true;
-  for (const a of Object.values(speech)) {
-    a.muted = true;
+const speechBuffers = {};
+async function preloadSpeech() {
+  const ctx = ensureAudio();
+  if (!ctx) return;
+  await Promise.all(Object.entries(speechSrc).map(async ([key, src]) => {
     try {
-      const p = a.play();
-      if (p && p.then) {
-        p.then(() => { a.pause(); a.currentTime = 0; a.muted = false; })
-         .catch(() => { a.muted = false; });
-      } else {
-        a.pause(); a.currentTime = 0; a.muted = false;
-      }
-    } catch { a.muted = false; }
-  }
+      const r = await fetch(src);
+      if (!r.ok) return;
+      speechBuffers[key] = await ctx.decodeAudioData(await r.arrayBuffer());
+    } catch { /* leave the buffer unset; speak() will use the fallback */ }
+  }));
 }
 function speak(key, fallback) {
   if (!dom.sound.checked) return;
-  const a = speech[key];
-  if (!a || a.error) { fallback && fallback(); return; }
+  const ctx = ensureAudio();
+  const buf = speechBuffers[key];
+  if (!ctx || !buf) { fallback && fallback(); return; }
   try {
-    a.pause();
-    a.currentTime = 0;
-    const p = a.play();
-    if (p && p.catch) p.catch(() => fallback && fallback());
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(ctx.destination);
+    src.start();
   } catch { fallback && fallback(); }
 }
 
@@ -500,18 +485,16 @@ async function calibrateShake() {
 // ---------- input wiring ----------
 dom.primary.addEventListener('click', () => {
   ensureAudio();
-  unlockSpeech();
   if (state.phase === 'idle') start();
   else if (state.phase === 'countdown') syncToWholeMinute();
   else if (state.phase === 'racing') stopRacing();
 });
 
-// Catch-all: any first interaction primes the audio elements, so even
-// shake-to-sync (which fires Sync without a click on Start first) is heard.
-// Same gesture also re-arms shake-to-sync on iOS if it was the saved choice.
+// Catch-all: any first interaction resumes the AudioContext so subsequent
+// programmatic plays (including shake-to-sync) work without prior taps.
+// The same gesture re-arms shake-to-sync on iOS if it was the saved choice.
 const firstGesture = () => {
   ensureAudio();
-  unlockSpeech();
   if (pendingShakeRestore && dom.shake.checked && !shakeOn) {
     pendingShakeRestore = false;
     enableShake(true);
