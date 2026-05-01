@@ -40,7 +40,6 @@ const dom = {
   shake:      $('shake-toggle'),
   shakeSens:  $('shake-sensitivity'),
   shakeOut:   $('shake-sensitivity-out'),
-  audio:      $('audio-toggle'),
 };
 
 // ---------- formatting ----------
@@ -298,52 +297,6 @@ async function enableShake(on) {
   }
 }
 
-// ---------- horn-listen ----------
-let micStream = null;
-let micRaf = null;
-let micBaseline = 0.02;
-let lastHorn = 0;
-async function enableHorn(on) {
-  if (on) {
-    try {
-      micStream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
-      });
-    } catch { dom.audio.checked = false; return; }
-    const ctx = ensureAudio();
-    if (!ctx) { stopHorn(); return; }
-    const src = ctx.createMediaStreamSource(micStream);
-    const analyser = ctx.createAnalyser();
-    analyser.fftSize = 1024;
-    src.connect(analyser);
-    const buf = new Float32Array(analyser.fftSize);
-    const tick = () => {
-      analyser.getFloatTimeDomainData(buf);
-      let peak = 0;
-      for (let i = 0; i < buf.length; i++) {
-        const v = Math.abs(buf[i]);
-        if (v > peak) peak = v;
-      }
-      micBaseline = micBaseline * 0.995 + peak * 0.005;
-      const now = performance.now();
-      if (state.phase === 'countdown' &&
-          peak > 0.25 && peak > micBaseline * 5 &&
-          now - lastHorn > 1500) {
-        lastHorn = now;
-        syncToWholeMinute('Horn');
-      }
-      micRaf = requestAnimationFrame(tick);
-    };
-    tick();
-  } else {
-    stopHorn();
-  }
-}
-function stopHorn() {
-  if (micRaf) { cancelAnimationFrame(micRaf); micRaf = null; }
-  if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
-}
-
 // ---------- input wiring ----------
 dom.primary.addEventListener('click', () => {
   ensureAudio();
@@ -361,7 +314,6 @@ dom.seq.forEach(r => r.addEventListener('change', (e) => {
 }));
 
 dom.shake.addEventListener('change', (e) => enableShake(e.target.checked));
-dom.audio.addEventListener('change', (e) => enableHorn(e.target.checked));
 dom.sound.addEventListener('change', () => ensureAudio());
 
 dom.shakeSens.addEventListener('input', (e) => {

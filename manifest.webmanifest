@@ -1,7 +1,7 @@
 {
   "name": "Klaxon — Regatta Timer",
   "short_name": "Klaxon",
-  "description": "Offline regatta start-sequence timer with shake- and horn-sync.",
+  "description": "Offline regatta start-sequence timer with shake-to-sync.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
