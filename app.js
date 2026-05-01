@@ -146,8 +146,13 @@ function seekMasterAudio() {
 }
 
 // Sync confirmation: short Web Audio buffer or a synthesized chirp fallback.
-// Kept as a separate one-shot so it can layer over the master without
-// disturbing it (a seek alone leaves a silent gap until the next cue).
+// Sync-to-nearest-minute always seeks the master onto a cue, so the sync
+// sound is delayed past the end of any in-flight cue to keep the spoken
+// minute mark and "Sync" from talking over each other. Visual flash and
+// vibration still fire immediately so the action remains responsive.
+const MASTER_CUE_OFFSETS = [0, 60, 120, 180, 240, 300,
+  350, 351, 352, 353, 354, 355, 356, 357, 358, 359, 360];
+const MASTER_CUE_DURATION_S = 1.1; // longest cue ≈ 0.97s plus a small buffer
 let syncBuffer = null;
 async function preloadSync() {
   const ctx = ensureAudio();
@@ -156,6 +161,16 @@ async function preloadSync() {
     const r = await fetch('audio/sync.mp3');
     if (r.ok) syncBuffer = await ctx.decodeAudioData(await r.arrayBuffer());
   } catch { /* fall back to chirp */ }
+}
+function masterCueOverlapDelayMs() {
+  if (!masterAudio || masterAudio.paused) return 0;
+  const t = masterAudio.currentTime;
+  for (const cue of MASTER_CUE_OFFSETS) {
+    if (t >= cue && t < cue + MASTER_CUE_DURATION_S) {
+      return Math.max(0, (cue + MASTER_CUE_DURATION_S - t) * 1000);
+    }
+  }
+  return 0;
 }
 function chirp() {
   const ctx = ensureAudio();
@@ -174,21 +189,25 @@ function chirp() {
     osc.stop(t + n.s + n.d + 0.02);
   }
 }
-function signalSync() {
-  if (dom.sound.checked) {
-    const ctx = ensureAudio();
-    if (ctx && syncBuffer) {
-      try {
-        const src = ctx.createBufferSource();
-        src.buffer = syncBuffer;
-        src.connect(ctx.destination);
-        src.start();
-      } catch { chirp(); }
-    } else {
-      chirp();
-    }
+function playSyncSound() {
+  const ctx = ensureAudio();
+  if (ctx && syncBuffer) {
+    try {
+      const src = ctx.createBufferSource();
+      src.buffer = syncBuffer;
+      src.connect(ctx.destination);
+      src.start();
+    } catch { chirp(); }
+  } else {
+    chirp();
   }
+}
+function signalSync() {
   vibrate(60);
+  if (!dom.sound.checked) return;
+  const delay = masterCueOverlapDelayMs();
+  if (delay > 0) setTimeout(playSyncSound, delay + 80);
+  else playSyncSound();
 }
 
 function setupMediaSession() {
@@ -220,8 +239,9 @@ function syncToWholeMinute(label = 'Sync') {
   const remaining = state.zeroEpoch - now;
   const snapped = Math.round(remaining / 60000) * 60000;
   state.zeroEpoch = now + snapped;
-  signalSync();
+  // Seek first so signalSync's cue-overlap check sees the new track position.
   seekMasterAudio();
+  signalSync();
   flashSync(label);
 }
 
