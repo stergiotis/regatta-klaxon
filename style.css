@@ -282,6 +282,11 @@ input[type="checkbox"], input[type="radio"] {
   line-height: 1.5;
 }
 
+.clear-btn {
+  margin-top: 1rem;
+  width: 100%;
+}
+
 /* a brief flash when sync fires */
 .sync-flash {
   animation: flash 0.4s ease-out;

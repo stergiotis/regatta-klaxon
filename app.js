@@ -13,14 +13,29 @@ const state = {
 
 // ---------- persisted settings ----------
 const STORE_KEY = 'klaxon-settings';
+const DEFAULTS = {
+  sequenceMin: 5,
+  soundOn: true,
+  shakeOn: false,
+  shakeSensitivity: 5,
+};
 function loadSettings() {
   try { return JSON.parse(localStorage.getItem(STORE_KEY) || '{}'); }
   catch { return {}; }
 }
-function saveSettings(patch) {
-  try {
-    localStorage.setItem(STORE_KEY, JSON.stringify({ ...loadSettings(), ...patch }));
-  } catch { /* private mode etc. */ }
+function persistSettings() {
+  const seqEl = document.querySelector('input[name="seq"]:checked');
+  const data = {
+    sequenceMin: seqEl ? parseInt(seqEl.value, 10) : DEFAULTS.sequenceMin,
+    soundOn: dom.sound.checked,
+    shakeOn: dom.shake.checked,
+    shakeSensitivity: state.shakeSensitivity,
+  };
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(data)); }
+  catch { /* private mode etc. */ }
+}
+function clearStoredSettings() {
+  try { localStorage.removeItem(STORE_KEY); } catch {}
 }
 // Map slider 1..10 to threshold ~30..3 m/s². Sensitivity 5 → 18 (the original default).
 const sensitivityToThreshold = (s) => 33 - 3 * s;
@@ -40,6 +55,7 @@ const dom = {
   shake:      $('shake-toggle'),
   shakeSens:  $('shake-sensitivity'),
   shakeOut:   $('shake-sensitivity-out'),
+  clear:      $('clear-settings'),
 };
 
 // ---------- formatting ----------
@@ -311,17 +327,24 @@ dom.reset.addEventListener('click', reset);
 dom.seq.forEach(r => r.addEventListener('change', (e) => {
   state.durationMs = parseInt(e.target.value, 10) * 60 * 1000;
   if (state.phase === 'idle') state.lastDisplayedSec = null;
+  persistSettings();
 }));
 
-dom.shake.addEventListener('change', (e) => enableShake(e.target.checked));
-dom.sound.addEventListener('change', () => ensureAudio());
+dom.shake.addEventListener('change', (e) => { enableShake(e.target.checked); persistSettings(); });
+dom.sound.addEventListener('change', () => { ensureAudio(); persistSettings(); });
 
 dom.shakeSens.addEventListener('input', (e) => {
   const s = parseInt(e.target.value, 10);
   state.shakeSensitivity = s;
   state.shakeThreshold = sensitivityToThreshold(s);
   dom.shakeOut.value = s;
-  saveSettings({ shakeSensitivity: s });
+  persistSettings();
+});
+
+dom.clear.addEventListener('click', () => {
+  clearStoredSettings();
+  applySettings(DEFAULTS);
+  flashSync('Settings cleared');
 });
 
 // keyboard for desktop testing
@@ -340,14 +363,35 @@ if ('serviceWorker' in navigator) {
   });
 }
 
-// ---------- start ----------
-{
-  const s = loadSettings();
-  if (typeof s.shakeSensitivity === 'number' && s.shakeSensitivity >= 1 && s.shakeSensitivity <= 10) {
-    state.shakeSensitivity = s.shakeSensitivity;
-  }
-  state.shakeThreshold = sensitivityToThreshold(state.shakeSensitivity);
-  dom.shakeSens.value = state.shakeSensitivity;
-  dom.shakeOut.value = state.shakeSensitivity;
+// Apply a settings object to runtime state and the UI. Missing/invalid keys fall back to DEFAULTS.
+function applySettings(s) {
+  const merged = { ...DEFAULTS, ...s };
+
+  // sequence
+  const seq = [3, 5, 6].includes(merged.sequenceMin) ? merged.sequenceMin : DEFAULTS.sequenceMin;
+  state.durationMs = seq * 60 * 1000;
+  state.lastDisplayedSec = null;
+  const seqEl = document.querySelector(`input[name="seq"][value="${seq}"]`);
+  if (seqEl) seqEl.checked = true;
+
+  // sound
+  dom.sound.checked = merged.soundOn !== false;
+
+  // sensitivity
+  const sens = (typeof merged.shakeSensitivity === 'number' && merged.shakeSensitivity >= 1 && merged.shakeSensitivity <= 10)
+    ? merged.shakeSensitivity : DEFAULTS.shakeSensitivity;
+  state.shakeSensitivity = sens;
+  state.shakeThreshold = sensitivityToThreshold(sens);
+  dom.shakeSens.value = sens;
+  dom.shakeOut.value = sens;
+
+  // shake toggle: best-effort restore. iOS requires a user gesture for permission,
+  // so enableShake will silently fail there and uncheck the box; user re-taps once per session.
+  const wantShake = !!merged.shakeOn;
+  dom.shake.checked = wantShake;
+  enableShake(wantShake);
 }
+
+// ---------- start ----------
+applySettings(loadSettings());
 render();
