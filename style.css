@@ -131,6 +131,12 @@ button:disabled:active { transform: none; }
   gap: 0.75rem;
 }
 
+.stop-btn {
+  width: 100%;
+  letter-spacing: 0.1em;
+}
+.stop-btn[hidden] { display: none; }
+
 /* phase-driven color theming */
 .phase-idle    { background: var(--v0); color: var(--v4); }
 .phase-far     { background: var(--v1); color: var(--v4); }

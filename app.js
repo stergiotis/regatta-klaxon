@@ -64,6 +64,7 @@ const dom = {
   primary:    $('primary'),
   minus:      $('minus'),
   plus:       $('plus'),
+  stop:       $('stop'),
   reset:      $('reset'),
   seq:        document.querySelectorAll('input[name="seq"]'),
   sound:      $('sound-toggle'),
@@ -299,6 +300,7 @@ function render() {
     dom.primary.textContent = 'Start';
     dom.minus.disabled = true;
     dom.plus.disabled = true;
+    dom.stop.hidden = true;
   } else if (state.phase === 'countdown') {
     const remaining = state.zeroEpoch - now;
     displayMs = remaining;
@@ -316,6 +318,7 @@ function render() {
     dom.primary.textContent = 'Sync';
     dom.minus.disabled = false;
     dom.plus.disabled = false;
+    dom.stop.hidden = false;
   } else if (state.phase === 'racing') {
     const elapsed = now - state.zeroEpoch;
     displayMs = -elapsed; // negative = elapsed
@@ -324,6 +327,7 @@ function render() {
     dom.primary.textContent = 'Stop';
     dom.minus.disabled = true;
     dom.plus.disabled = true;
+    dom.stop.hidden = true; // primary already says Stop
   }
 
   const f = fmt(displayMs);
@@ -527,6 +531,7 @@ document.addEventListener('click',     firstGesture, { once: true, capture: true
 document.addEventListener('touchstart', firstGesture, { once: true, capture: true });
 dom.minus.addEventListener('click', () => adjustMinutes(-1));
 dom.plus.addEventListener('click',  () => adjustMinutes(+1));
+dom.stop.addEventListener('click',  reset);
 dom.reset.addEventListener('click', reset);
 
 dom.seq.forEach(r => r.addEventListener('change', (e) => {
