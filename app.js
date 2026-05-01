@@ -7,22 +7,40 @@ const state = {
   durationMs: 5 * 60 * 1000,     // for the next start
   zeroEpoch: 0,                  // epoch-ms when timer hits 0:00
   lastDisplayedSec: null,        // last whole second shown (for boundary detection)
+  shakeSensitivity: 5,           // 1 (least sensitive) … 10 (most sensitive)
+  shakeThreshold: 18,            // m/s² peak above adaptive baseline (derived from sensitivity)
 };
+
+// ---------- persisted settings ----------
+const STORE_KEY = 'klaxon-settings';
+function loadSettings() {
+  try { return JSON.parse(localStorage.getItem(STORE_KEY) || '{}'); }
+  catch { return {}; }
+}
+function saveSettings(patch) {
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify({ ...loadSettings(), ...patch }));
+  } catch { /* private mode etc. */ }
+}
+// Map slider 1..10 to threshold ~30..3 m/s². Sensitivity 5 → 18 (the original default).
+const sensitivityToThreshold = (s) => 33 - 3 * s;
 
 const $ = (id) => document.getElementById(id);
 const dom = {
-  app:     $('app'),
-  status:  $('status'),
-  time:    $('time'),
-  phase:   $('phase'),
-  primary: $('primary'),
-  minus:   $('minus'),
-  plus:    $('plus'),
-  reset:   $('reset'),
-  seq:     document.querySelectorAll('input[name="seq"]'),
-  sound:   $('sound-toggle'),
-  shake:   $('shake-toggle'),
-  audio:   $('audio-toggle'),
+  app:        $('app'),
+  status:     $('status'),
+  time:       $('time'),
+  phase:      $('phase'),
+  primary:    $('primary'),
+  minus:      $('minus'),
+  plus:       $('plus'),
+  reset:      $('reset'),
+  seq:        document.querySelectorAll('input[name="seq"]'),
+  sound:      $('sound-toggle'),
+  shake:      $('shake-toggle'),
+  shakeSens:  $('shake-sensitivity'),
+  shakeOut:   $('shake-sensitivity-out'),
+  audio:      $('audio-toggle'),
 };
 
 // ---------- formatting ----------
@@ -66,6 +84,28 @@ function vibrate(pattern) {
 function signalMinute()  { beep({ freq: 660, duration: 0.25, volume: 0.5 }); vibrate(120); }
 function signalTick()    { beep({ freq: 880, duration: 0.08, volume: 0.35 }); vibrate(40); }
 function signalStart()   { beep({ freq: 440, duration: 0.9,  volume: 0.55, type: 'square' }); vibrate([300, 80, 300]); }
+// Sync confirmation: short two-tone ascending chirp. Distinct from minute/tick beeps.
+function signalSync() {
+  if (dom.sound.checked) {
+    const ctx = ensureAudio();
+    if (ctx) {
+      const t = ctx.currentTime;
+      for (const n of [{ f: 660, s: 0, d: 0.07 }, { f: 990, s: 0.08, d: 0.10 }]) {
+        const osc = ctx.createOscillator();
+        const g = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = n.f;
+        osc.connect(g).connect(ctx.destination);
+        g.gain.setValueAtTime(0, t + n.s);
+        g.gain.linearRampToValueAtTime(0.4, t + n.s + 0.005);
+        g.gain.exponentialRampToValueAtTime(0.001, t + n.s + n.d);
+        osc.start(t + n.s);
+        osc.stop(t + n.s + n.d + 0.02);
+      }
+    }
+  }
+  vibrate(60);
+}
 
 // ---------- core timing ----------
 function setPhase(next) {
@@ -74,13 +114,14 @@ function setPhase(next) {
   state.lastDisplayedSec = null;
 }
 
-function syncToWholeMinute() {
+function syncToWholeMinute(label = 'Sync') {
   if (state.phase !== 'countdown') return;
   const now = Date.now();
   const remaining = state.zeroEpoch - now;
   const snapped = Math.round(remaining / 60000) * 60000;
   state.zeroEpoch = now + snapped;
-  flashSync('Sync');
+  signalSync();
+  flashSync(label);
 }
 
 function adjustMinutes(delta) {
@@ -237,9 +278,9 @@ function onMotion(e) {
   shakeBaseline = shakeBaseline * 0.98 + mag * 0.02;
   const peak = Math.abs(mag - shakeBaseline);
   const now = performance.now();
-  if (peak > 18 && now - lastShake > 1200) {
+  if (peak > state.shakeThreshold && now - lastShake > 1200) {
     lastShake = now;
-    syncToWholeMinute();
+    syncToWholeMinute('Shake');
   }
 }
 async function enableShake(on) {
@@ -289,7 +330,7 @@ async function enableHorn(on) {
           peak > 0.25 && peak > micBaseline * 5 &&
           now - lastHorn > 1500) {
         lastHorn = now;
-        syncToWholeMinute();
+        syncToWholeMinute('Horn');
       }
       micRaf = requestAnimationFrame(tick);
     };
@@ -323,6 +364,14 @@ dom.shake.addEventListener('change', (e) => enableShake(e.target.checked));
 dom.audio.addEventListener('change', (e) => enableHorn(e.target.checked));
 dom.sound.addEventListener('change', () => ensureAudio());
 
+dom.shakeSens.addEventListener('input', (e) => {
+  const s = parseInt(e.target.value, 10);
+  state.shakeSensitivity = s;
+  state.shakeThreshold = sensitivityToThreshold(s);
+  dom.shakeOut.value = s;
+  saveSettings({ shakeSensitivity: s });
+});
+
 // keyboard for desktop testing
 window.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') return;
@@ -340,4 +389,13 @@ if ('serviceWorker' in navigator) {
 }
 
 // ---------- start ----------
+{
+  const s = loadSettings();
+  if (typeof s.shakeSensitivity === 'number' && s.shakeSensitivity >= 1 && s.shakeSensitivity <= 10) {
+    state.shakeSensitivity = s.shakeSensitivity;
+  }
+  state.shakeThreshold = sensitivityToThreshold(state.shakeSensitivity);
+  dom.shakeSens.value = state.shakeSensitivity;
+  dom.shakeOut.value = state.shakeSensitivity;
+}
 render();

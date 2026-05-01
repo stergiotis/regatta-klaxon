@@ -225,6 +225,45 @@ button:disabled:active { transform: none; }
   margin-right: 0 !important;
 }
 
+.slider-row {
+  display: grid !important;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 0.25rem 1rem;
+  padding: 0.6rem 0 0.4rem;
+  margin-right: 0 !important;
+}
+.slider-label-text { font-size: 0.95rem; }
+.slider-row output {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  min-width: 1.5em;
+  text-align: right;
+  opacity: 0.85;
+}
+.slider-row input[type="range"] {
+  grid-column: 1 / -1;
+  width: 100%;
+  accent-color: var(--v4);
+  height: 1.5rem;
+}
+.slider-ends {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: space-between;
+  font-style: normal;
+  font-size: 0.7rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  opacity: 0.45;
+  margin-top: -0.2rem;
+}
+.slider-ends em { font-style: normal; }
+.phase-close .slider-row input[type="range"],
+.phase-final .slider-row input[type="range"] {
+  accent-color: var(--v0);
+}
+
 input[type="checkbox"], input[type="radio"] {
   width: 1.25rem;
   height: 1.25rem;
