@@ -13,19 +13,33 @@ const state = {
 
 // ---------- persisted settings ----------
 const STORE_KEY = 'klaxon-settings';
+const SCHEMA_VERSION = 2; // v1: slider 1=least, 10=most sensitive (inverse of marker pos).
+                          // v2: slider 1=low threshold (easy trigger), 10=high (hard trigger).
 const DEFAULTS = {
+  version: SCHEMA_VERSION,
   sequenceMin: 5,
   soundOn: true,
   shakeOn: false,
-  shakeSensitivity: 5,
+  shakeSensitivity: 6, // threshold = 3 × 6 = 18 m/s², matches the v1 default of 5.
 };
 function loadSettings() {
-  try { return JSON.parse(localStorage.getItem(STORE_KEY) || '{}'); }
+  try { return migrateSettings(JSON.parse(localStorage.getItem(STORE_KEY) || '{}')); }
   catch { return {}; }
+}
+function migrateSettings(raw) {
+  if (!raw || raw.version === SCHEMA_VERSION) return raw || {};
+  // v1 -> v2: invert slider so value follows threshold, not sensitivity.
+  // Keeps the user's tuned threshold the same; only the displayed number flips.
+  if (typeof raw.shakeSensitivity === 'number') {
+    raw.shakeSensitivity = 11 - raw.shakeSensitivity;
+  }
+  raw.version = SCHEMA_VERSION;
+  return raw;
 }
 function persistSettings() {
   const seqEl = document.querySelector('input[name="seq"]:checked');
   const data = {
+    version: SCHEMA_VERSION,
     sequenceMin: seqEl ? parseInt(seqEl.value, 10) : DEFAULTS.sequenceMin,
     soundOn: dom.sound.checked,
     shakeOn: dom.shake.checked,
@@ -37,8 +51,10 @@ function persistSettings() {
 function clearStoredSettings() {
   try { localStorage.removeItem(STORE_KEY); } catch {}
 }
-// Map slider 1..10 to threshold ~30..3 m/s². Sensitivity 5 → 18 (the original default).
-const sensitivityToThreshold = (s) => 33 - 3 * s;
+// Slider 1..10 maps directly to threshold m/s² above the adaptive baseline.
+// 1 = low threshold (easy trigger), 10 = high (hard). Slider position therefore
+// matches the threshold marker position on the meter.
+const sensitivityToThreshold = (s) => 3 * s;
 
 const $ = (id) => document.getElementById(id);
 const dom = {
@@ -408,7 +424,12 @@ async function ensureMotionPermission() {
 async function enableShake(on) {
   if (!!on === shakeOn) return;
   if (on) {
-    if (!await ensureMotionPermission()) { dom.shake.checked = false; return; }
+    if (!await ensureMotionPermission()) {
+      dom.shake.checked = false;
+      // Persist the denial so we don't keep asking on every load.
+      persistSettings();
+      return;
+    }
     shakeOn = true;
     attachMotion();
   } else {
@@ -416,6 +437,11 @@ async function enableShake(on) {
     detachMotion();
   }
 }
+
+// Some platforms (notably iOS) require a user gesture to grant motion access.
+// applySettings() defers re-enabling shake-to-sync until the first gesture so
+// the saved preference survives reloads instead of silently bouncing off.
+let pendingShakeRestore = false;
 
 function updateMeter(peak) {
   if (!dom.meterBar) return;
@@ -455,9 +481,9 @@ async function calibrateShake() {
   }
 
   // Threshold ≈ 70% of recorded peak so a real-race shake reliably exceeds it,
-  // mapped back through the slider scale.
+  // mapped to the slider's 1..10 threshold scale.
   const newThreshold = calibrationMaxPeak * 0.7;
-  const sens = Math.max(1, Math.min(10, Math.round((33 - newThreshold) / 3)));
+  const sens = Math.max(1, Math.min(10, Math.round(newThreshold / 3)));
   state.shakeSensitivity = sens;
   state.shakeThreshold = sensitivityToThreshold(sens);
   dom.shakeSens.value = sens;
@@ -482,9 +508,14 @@ dom.primary.addEventListener('click', () => {
 
 // Catch-all: any first interaction primes the audio elements, so even
 // shake-to-sync (which fires Sync without a click on Start first) is heard.
+// Same gesture also re-arms shake-to-sync on iOS if it was the saved choice.
 const firstGesture = () => {
   ensureAudio();
   unlockSpeech();
+  if (pendingShakeRestore && dom.shake.checked && !shakeOn) {
+    pendingShakeRestore = false;
+    enableShake(true);
+  }
 };
 document.addEventListener('click',     firstGesture, { once: true, capture: true });
 document.addEventListener('touchstart', firstGesture, { once: true, capture: true });
@@ -557,11 +588,21 @@ function applySettings(s) {
   dom.shakeOut.value = sens;
   updateThresholdMarker();
 
-  // shake toggle: best-effort restore. iOS requires a user gesture for permission,
-  // so enableShake will silently fail there and uncheck the box; user re-taps once per session.
+  // shake toggle: re-arm immediately on platforms where permission is automatic
+  // (Android, desktop). On iOS, defer until the first user gesture so the
+  // permission prompt is anchored to a real interaction and the preference
+  // survives reloads instead of bouncing off.
   const wantShake = !!merged.shakeOn;
   dom.shake.checked = wantShake;
-  enableShake(wantShake);
+  const needsMotionGesture = typeof DeviceMotionEvent !== 'undefined' &&
+                             typeof DeviceMotionEvent.requestPermission === 'function';
+  if (wantShake) {
+    if (needsMotionGesture) pendingShakeRestore = true;
+    else enableShake(true);
+  } else {
+    pendingShakeRestore = false;
+    enableShake(false);
+  }
 }
 
 // ---------- start ----------
