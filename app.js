@@ -121,6 +121,30 @@ function preloadSpeech() {
     speech[k] = a;
   }
 }
+
+// iOS Safari requires a user gesture to unlock each <audio> individually.
+// On the first user interaction we briefly play every element muted, which
+// primes them so later programmatic calls actually produce sound. Without
+// this, only the cue triggered in the gesture handler itself (minute_5 in
+// start()) plays, and subsequent ticks (sec_10 ... sec_1, minute_4 ... 1)
+// silently no-op because their Audio elements were never primed.
+let speechUnlocked = false;
+function unlockSpeech() {
+  if (speechUnlocked) return;
+  speechUnlocked = true;
+  for (const a of Object.values(speech)) {
+    a.muted = true;
+    try {
+      const p = a.play();
+      if (p && p.then) {
+        p.then(() => { a.pause(); a.currentTime = 0; a.muted = false; })
+         .catch(() => { a.muted = false; });
+      } else {
+        a.pause(); a.currentTime = 0; a.muted = false;
+      }
+    } catch { a.muted = false; }
+  }
+}
 function speak(key, fallback) {
   if (!dom.sound.checked) return;
   const a = speech[key];
@@ -450,10 +474,20 @@ async function calibrateShake() {
 // ---------- input wiring ----------
 dom.primary.addEventListener('click', () => {
   ensureAudio();
+  unlockSpeech();
   if (state.phase === 'idle') start();
   else if (state.phase === 'countdown') syncToWholeMinute();
   else if (state.phase === 'racing') stopRacing();
 });
+
+// Catch-all: any first interaction primes the audio elements, so even
+// shake-to-sync (which fires Sync without a click on Start first) is heard.
+const firstGesture = () => {
+  ensureAudio();
+  unlockSpeech();
+};
+document.addEventListener('click',     firstGesture, { once: true, capture: true });
+document.addEventListener('touchstart', firstGesture, { once: true, capture: true });
 dom.minus.addEventListener('click', () => adjustMinutes(-1));
 dom.plus.addEventListener('click',  () => adjustMinutes(+1));
 dom.reset.addEventListener('click', reset);
