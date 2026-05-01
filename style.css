@@ -264,6 +264,60 @@ button:disabled:active { transform: none; }
   accent-color: var(--v0);
 }
 
+.shake-meter {
+  position: relative;
+  height: 10px;
+  background: rgba(253, 231, 37, 0.08);
+  border: 1px solid rgba(253, 231, 37, 0.2);
+  border-radius: 5px;
+  margin: 0.25rem 0 0.75rem;
+}
+.shake-meter-bar {
+  position: absolute;
+  inset: 0;
+  width: 0%;
+  background: var(--v4);
+  border-radius: 5px;
+  transition: width 0.06s linear;
+  pointer-events: none;
+}
+.shake-meter-threshold {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 2px;
+  background: var(--v4);
+  outline: 1px solid var(--v0);
+  left: 0%;
+  pointer-events: none;
+}
+.calibrate-btn {
+  width: 100%;
+  font-size: 0.95rem;
+  padding: 0.85rem;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.25rem;
+}
+.calibrate-btn:disabled {
+  opacity: 1;
+  font-variant-numeric: tabular-nums;
+}
+.phase-close .shake-meter,
+.phase-final .shake-meter {
+  background: rgba(68, 1, 84, 0.12);
+  border-color: rgba(68, 1, 84, 0.3);
+}
+.phase-close .shake-meter-bar,
+.phase-final .shake-meter-bar {
+  background: var(--v0);
+}
+.phase-close .shake-meter-threshold,
+.phase-final .shake-meter-threshold {
+  background: var(--v0);
+  outline-color: var(--v4);
+}
+
 input[type="checkbox"], input[type="radio"] {
   width: 1.25rem;
   height: 1.25rem;

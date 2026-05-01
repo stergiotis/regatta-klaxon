@@ -55,6 +55,9 @@ const dom = {
   shake:      $('shake-toggle'),
   shakeSens:  $('shake-sensitivity'),
   shakeOut:   $('shake-sensitivity-out'),
+  meterBar:   $('meter-bar'),
+  meterThresh:$('meter-thresh'),
+  calibrate:  $('calibrate'),
   clear:      $('clear-settings'),
 };
 
@@ -277,11 +280,30 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && state.phase !== 'idle' && !wakeLock) acquireWakeLock();
 });
 
-// ---------- shake-to-sync ----------
+// ---------- shake-to-sync + calibration ----------
+const METER_MAX = 30; // m/s² peak above baseline; bar pegs at 100% above this
 let shakeBaseline = 9.81;
 let lastShake = 0;
+let calibrating = false;
+let calibrationMaxPeak = 0;
+
+// Ref-counted devicemotion listener so shake-to-sync and calibration can share it.
+let motionRefs = 0;
+let shakeOn = false;
+
+function attachMotion() {
+  motionRefs++;
+  if (motionRefs === 1) window.addEventListener('devicemotion', onMotion);
+}
+function detachMotion() {
+  motionRefs = Math.max(0, motionRefs - 1);
+  if (motionRefs === 0) {
+    window.removeEventListener('devicemotion', onMotion);
+    updateMeter(0);
+  }
+}
+
 function onMotion(e) {
-  if (state.phase !== 'countdown') return;
   const a = e.acceleration || (e.accelerationIncludingGravity && {
     x: e.accelerationIncludingGravity.x,
     y: e.accelerationIncludingGravity.y,
@@ -289,28 +311,96 @@ function onMotion(e) {
   });
   if (!a || a.x == null) return;
   const mag = Math.sqrt((a.x || 0) ** 2 + (a.y || 0) ** 2 + (a.z || 0) ** 2);
-  // adaptive baseline (handles whether gravity is included)
   shakeBaseline = shakeBaseline * 0.98 + mag * 0.02;
   const peak = Math.abs(mag - shakeBaseline);
+  updateMeter(peak);
+
+  if (calibrating) {
+    if (peak > calibrationMaxPeak) calibrationMaxPeak = peak;
+    return; // suppress sync triggers during calibration
+  }
+
+  if (state.phase !== 'countdown') return;
   const now = performance.now();
   if (peak > state.shakeThreshold && now - lastShake > 1200) {
     lastShake = now;
     syncToWholeMinute('Shake');
   }
 }
-async function enableShake(on) {
-  if (on) {
-    if (typeof DeviceMotionEvent !== 'undefined' &&
-        typeof DeviceMotionEvent.requestPermission === 'function') {
-      try {
-        const r = await DeviceMotionEvent.requestPermission();
-        if (r !== 'granted') { dom.shake.checked = false; return; }
-      } catch { dom.shake.checked = false; return; }
-    }
-    window.addEventListener('devicemotion', onMotion);
-  } else {
-    window.removeEventListener('devicemotion', onMotion);
+
+async function ensureMotionPermission() {
+  if (typeof DeviceMotionEvent !== 'undefined' &&
+      typeof DeviceMotionEvent.requestPermission === 'function') {
+    try { return (await DeviceMotionEvent.requestPermission()) === 'granted'; }
+    catch { return false; }
   }
+  return true;
+}
+
+async function enableShake(on) {
+  if (!!on === shakeOn) return;
+  if (on) {
+    if (!await ensureMotionPermission()) { dom.shake.checked = false; return; }
+    shakeOn = true;
+    attachMotion();
+  } else {
+    shakeOn = false;
+    detachMotion();
+  }
+}
+
+function updateMeter(peak) {
+  if (!dom.meterBar) return;
+  dom.meterBar.style.width = Math.min(100, (peak / METER_MAX) * 100) + '%';
+}
+function updateThresholdMarker() {
+  if (!dom.meterThresh) return;
+  dom.meterThresh.style.left = Math.min(100, (state.shakeThreshold / METER_MAX) * 100) + '%';
+}
+
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+const CALIBRATE_LABEL = 'Calibrate from a hard shake';
+
+async function calibrateShake() {
+  if (calibrating) return;
+  if (!await ensureMotionPermission()) return;
+
+  calibrating = true;
+  calibrationMaxPeak = 0;
+  attachMotion();
+  dom.calibrate.disabled = true;
+
+  for (let s = 3; s >= 1; s--) {
+    dom.calibrate.textContent = `Shake hard! ${s}`;
+    await sleep(1000);
+  }
+
+  detachMotion();
+  calibrating = false;
+
+  if (calibrationMaxPeak < 4) {
+    dom.calibrate.textContent = 'Try again, shake harder';
+    await sleep(1500);
+    dom.calibrate.textContent = CALIBRATE_LABEL;
+    dom.calibrate.disabled = false;
+    return;
+  }
+
+  // Threshold ≈ 70% of recorded peak so a real-race shake reliably exceeds it,
+  // mapped back through the slider scale.
+  const newThreshold = calibrationMaxPeak * 0.7;
+  const sens = Math.max(1, Math.min(10, Math.round((33 - newThreshold) / 3)));
+  state.shakeSensitivity = sens;
+  state.shakeThreshold = sensitivityToThreshold(sens);
+  dom.shakeSens.value = sens;
+  dom.shakeOut.value = sens;
+  updateThresholdMarker();
+  persistSettings();
+
+  dom.calibrate.textContent = `Set to ${sens} (peak ${calibrationMaxPeak.toFixed(1)} m/s²)`;
+  await sleep(2200);
+  dom.calibrate.textContent = CALIBRATE_LABEL;
+  dom.calibrate.disabled = false;
 }
 
 // ---------- input wiring ----------
@@ -338,8 +428,11 @@ dom.shakeSens.addEventListener('input', (e) => {
   state.shakeSensitivity = s;
   state.shakeThreshold = sensitivityToThreshold(s);
   dom.shakeOut.value = s;
+  updateThresholdMarker();
   persistSettings();
 });
+
+dom.calibrate.addEventListener('click', calibrateShake);
 
 dom.clear.addEventListener('click', () => {
   clearStoredSettings();
@@ -384,6 +477,7 @@ function applySettings(s) {
   state.shakeThreshold = sensitivityToThreshold(sens);
   dom.shakeSens.value = sens;
   dom.shakeOut.value = sens;
+  updateThresholdMarker();
 
   // shake toggle: best-effort restore. iOS requires a user gesture for permission,
   // so enableShake will silently fail there and uncheck the box; user re-taps once per session.

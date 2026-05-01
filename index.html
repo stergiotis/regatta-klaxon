@@ -50,6 +50,11 @@
         <input type="range" id="shake-sensitivity" min="1" max="10" step="1" value="5">
         <span class="slider-ends"><em>less</em><em>more</em></span>
       </label>
+      <div class="shake-meter" aria-label="Live shake strength">
+        <div class="shake-meter-bar" id="meter-bar"></div>
+        <div class="shake-meter-threshold" id="meter-thresh"></div>
+      </div>
+      <button id="calibrate" class="btn-secondary calibrate-btn" type="button">Calibrate from a hard shake</button>
       <p class="hint">Sync snaps the countdown to the nearest whole minute &mdash; tap the Sync button or shake the device when the official signal sounds.</p>
       <button id="clear-settings" class="btn-tertiary clear-btn" type="button">Clear settings</button>
     </details>
