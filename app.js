@@ -6,7 +6,6 @@ const state = {
   phase: 'idle',                 // 'idle' | 'countdown' | 'racing'
   durationMs: 5 * 60 * 1000,     // for the next start
   zeroEpoch: 0,                  // epoch-ms when timer hits 0:00
-  lastDisplayedSec: null,        // last whole second shown (for boundary detection)
   shakeSensitivity: 5,           // 1 (least sensitive) … 10 (most sensitive)
   shakeThreshold: 18,            // m/s² peak above adaptive baseline (derived from sensitivity)
 };
@@ -96,70 +95,69 @@ function ensureAudio() {
   if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
   return audioCtx;
 }
-function beep({ freq = 880, duration = 0.15, volume = 0.4, type = 'sine' } = {}) {
-  if (!dom.sound.checked) return;
-  const ctx = ensureAudio();
-  if (!ctx) return;
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
-  osc.type = type;
-  osc.frequency.value = freq;
-  osc.connect(gain).connect(ctx.destination);
-  const t = ctx.currentTime;
-  gain.gain.setValueAtTime(0, t);
-  gain.gain.linearRampToValueAtTime(volume, t + 0.01);
-  gain.gain.exponentialRampToValueAtTime(0.0001, t + duration);
-  osc.start(t);
-  osc.stop(t + duration + 0.05);
-}
 function vibrate(pattern) {
   if (navigator.vibrate) navigator.vibrate(pattern);
 }
-// Spoken cues: pre-rendered MP3 files decoded once into Web Audio buffers.
-// Playing via AudioBufferSourceNode avoids the HTMLAudioElement quirks that
-// caused intermittent silent shake-to-sync triggers on iOS — there's no
-// per-element gesture unlock, no pause/play race when cues fire close
-// together, and each play creates a fresh source node. Only the
-// AudioContext itself needs unlocking (handled by ensureAudio on first
-// gesture, the same as the chirp fallback already relies on).
-const speechSrc = {
-  m6: 'audio/minute_6.mp3', m5: 'audio/minute_5.mp3',
-  m4: 'audio/minute_4.mp3', m3: 'audio/minute_3.mp3',
-  m2: 'audio/minute_2.mp3', m1: 'audio/minute_1.mp3',
-  s10: 'audio/sec_10.mp3',  s9: 'audio/sec_9.mp3',
-  s8:  'audio/sec_8.mp3',   s7: 'audio/sec_7.mp3',
-  s6:  'audio/sec_6.mp3',   s5: 'audio/sec_5.mp3',
-  s4:  'audio/sec_4.mp3',   s3: 'audio/sec_3.mp3',
-  s2:  'audio/sec_2.mp3',   s1: 'audio/sec_1.mp3',
-  go:  'audio/go.mp3',     sync: 'audio/sync.mp3',
-};
-const speechBuffers = {};
-async function preloadSpeech() {
-  const ctx = ensureAudio();
-  if (!ctx) return;
-  await Promise.all(Object.entries(speechSrc).map(async ([key, src]) => {
-    try {
-      const r = await fetch(src);
-      if (!r.ok) return;
-      speechBuffers[key] = await ctx.decodeAudioData(await r.arrayBuffer());
-    } catch { /* leave the buffer unset; speak() will use the fallback */ }
-  }));
+
+// Spoken cues come from a single 6:02 master track played continuously
+// during the countdown. Minute marks (6,5,4,3,2,1) and the last-10s
+// ticks are pre-rendered at their canonical timestamps relative to the
+// race-start mark at 360s, so the runtime only needs to start, stop,
+// and seek a single HTMLAudioElement. This eliminates the per-cue
+// HTMLAudioElement quirks on iOS and — because a continuously playing
+// media element keeps Safari's audio session alive — the cues continue
+// firing when the phone screen locks. MediaSession metadata also
+// surfaces lock-screen controls.
+const MASTER_SRC = 'audio/master.mp3';
+const MASTER_RACE_MARK_S = 360; // track time at which 0:00 hits ("Race started!" is from this point)
+let masterAudio = null;
+
+function ensureMasterAudio() {
+  if (!masterAudio) {
+    masterAudio = new Audio(MASTER_SRC);
+    masterAudio.preload = 'auto';
+  }
+  return masterAudio;
 }
-function speak(key, fallback) {
+function trackTimeForRemaining(remainingMs) {
+  return MASTER_RACE_MARK_S - remainingMs / 1000;
+}
+function startMasterAudio() {
   if (!dom.sound.checked) return;
-  const ctx = ensureAudio();
-  const buf = speechBuffers[key];
-  if (!ctx || !buf) { fallback && fallback(); return; }
-  try {
-    const src = ctx.createBufferSource();
-    src.buffer = buf;
-    src.connect(ctx.destination);
-    src.start();
-  } catch { fallback && fallback(); }
+  const a = ensureMasterAudio();
+  const remaining = state.phase === 'countdown'
+    ? state.zeroEpoch - Date.now()
+    : state.durationMs;
+  const t = trackTimeForRemaining(remaining);
+  if (t < 0 || t > MASTER_RACE_MARK_S + 5) return;
+  try { a.currentTime = t; } catch {}
+  a.play().catch(() => {});
+}
+function stopMasterAudio() {
+  if (!masterAudio) return;
+  try { masterAudio.pause(); masterAudio.currentTime = 0; } catch {}
+}
+function seekMasterAudio() {
+  if (!masterAudio || masterAudio.paused) return;
+  const t = trackTimeForRemaining(state.zeroEpoch - Date.now());
+  if (t >= 0 && t <= MASTER_RACE_MARK_S + 5) {
+    try { masterAudio.currentTime = t; } catch {}
+  }
 }
 
+// Sync confirmation: short Web Audio buffer or a synthesized chirp fallback.
+// Kept as a separate one-shot so it can layer over the master without
+// disturbing it (a seek alone leaves a silent gap until the next cue).
+let syncBuffer = null;
+async function preloadSync() {
+  const ctx = ensureAudio();
+  if (!ctx) return;
+  try {
+    const r = await fetch('audio/sync.mp3');
+    if (r.ok) syncBuffer = await ctx.decodeAudioData(await r.arrayBuffer());
+  } catch { /* fall back to chirp */ }
+}
 function chirp() {
-  // Two-tone ascending chirp (used as fallback for sync).
   const ctx = ensureAudio();
   if (!ctx) return;
   const t = ctx.currentTime;
@@ -176,29 +174,44 @@ function chirp() {
     osc.stop(t + n.s + n.d + 0.02);
   }
 }
-
-function signalMinute(min) {
-  speak(`m${min}`, () => beep({ freq: 660, duration: 0.25, volume: 0.5 }));
-  vibrate(120);
-}
-function signalTick(sec) {
-  speak(`s${sec}`, () => beep({ freq: 880, duration: 0.08, volume: 0.35 }));
-  vibrate(40);
-}
-function signalStart() {
-  speak('go', () => beep({ freq: 440, duration: 0.9, volume: 0.55, type: 'square' }));
-  vibrate([300, 80, 300]);
-}
 function signalSync() {
-  speak('sync', chirp);
+  if (dom.sound.checked) {
+    const ctx = ensureAudio();
+    if (ctx && syncBuffer) {
+      try {
+        const src = ctx.createBufferSource();
+        src.buffer = syncBuffer;
+        src.connect(ctx.destination);
+        src.start();
+      } catch { chirp(); }
+    } else {
+      chirp();
+    }
+  }
   vibrate(60);
+}
+
+function setupMediaSession() {
+  if (!('mediaSession' in navigator)) return;
+  try {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: 'Klaxon — Race Start',
+      artist: 'Regatta start sequence',
+      artwork: [
+        { src: 'icon-192.png', sizes: '192x192', type: 'image/png' },
+        { src: 'icon-512.png', sizes: '512x512', type: 'image/png' },
+      ],
+    });
+    navigator.mediaSession.setActionHandler('pause', () => { if (state.phase !== 'idle') reset(); });
+    navigator.mediaSession.setActionHandler('stop',  () => { if (state.phase !== 'idle') reset(); });
+    navigator.mediaSession.setActionHandler('play',  () => { if (state.phase === 'countdown') startMasterAudio(); });
+  } catch { /* unsupported actions are fine */ }
 }
 
 // ---------- core timing ----------
 function setPhase(next) {
   if (state.phase === next) return;
   state.phase = next;
-  state.lastDisplayedSec = null;
 }
 
 function syncToWholeMinute(label = 'Sync') {
@@ -208,32 +221,37 @@ function syncToWholeMinute(label = 'Sync') {
   const snapped = Math.round(remaining / 60000) * 60000;
   state.zeroEpoch = now + snapped;
   signalSync();
+  seekMasterAudio();
   flashSync(label);
 }
 
 function adjustMinutes(delta) {
   if (state.phase !== 'countdown') return;
   state.zeroEpoch += delta * 60000;
+  seekMasterAudio();
   flashSync(delta > 0 ? '+1 min' : '−1 min');
 }
 
 function start() {
-  ensureAudio(); // unlock for later programmatic playback
+  ensureAudio();
   state.zeroEpoch = Date.now() + state.durationMs;
   setPhase('countdown');
-  signalMinute(Math.round(state.durationMs / 60000)); // confirm start with duration
+  setupMediaSession();
+  startMasterAudio();
   acquireWakeLock();
 }
 
 function stopRacing() {
   setPhase('idle');
   state.zeroEpoch = 0;
+  stopMasterAudio();
   releaseWakeLock();
 }
 
 function reset() {
   setPhase('idle');
   state.zeroEpoch = 0;
+  stopMasterAudio();
   releaseWakeLock();
 }
 
@@ -265,9 +283,9 @@ function render() {
     const remaining = state.zeroEpoch - now;
     displayMs = remaining;
     if (remaining <= 0) {
-      // transition to racing
+      // The master track plays "Race started!" at MASTER_RACE_MARK_S, so
+      // we let it continue rather than triggering a separate cue here.
       setPhase('racing');
-      signalStart();
       return render();
     }
     if      (remaining > 4 * 60000) phaseClass = 'phase-far';
@@ -299,21 +317,6 @@ function render() {
     dom.app.classList.add(phaseClass);
     dom.app.dataset.phase = phaseClass.replace('phase-', '');
     updateThemeColor(phaseClass);
-  }
-
-  // boundary-crossing audio cues (countdown only)
-  if (state.phase === 'countdown') {
-    const sec = Math.ceil((state.zeroEpoch - now) / 1000);
-    if (state.lastDisplayedSec !== null && state.lastDisplayedSec > sec) {
-      for (let s = state.lastDisplayedSec - 1; s >= sec && s >= 0; s--) {
-        if (s === 0) continue; // start signal handled at transition
-        if (s > 0 && s % 60 === 0) signalMinute(s / 60);
-        else if (s > 0 && s <= 10) signalTick(s);
-      }
-    }
-    state.lastDisplayedSec = sec;
-  } else {
-    state.lastDisplayedSec = null;
   }
 
   rafId = requestAnimationFrame(render);
@@ -508,12 +511,18 @@ dom.reset.addEventListener('click', reset);
 
 dom.seq.forEach(r => r.addEventListener('change', (e) => {
   state.durationMs = parseInt(e.target.value, 10) * 60 * 1000;
-  if (state.phase === 'idle') state.lastDisplayedSec = null;
   persistSettings();
 }));
 
 dom.shake.addEventListener('change', (e) => { enableShake(e.target.checked); persistSettings(); });
-dom.sound.addEventListener('change', () => { ensureAudio(); persistSettings(); });
+dom.sound.addEventListener('change', () => {
+  ensureAudio();
+  persistSettings();
+  if (state.phase === 'countdown') {
+    if (dom.sound.checked) startMasterAudio();
+    else stopMasterAudio();
+  }
+});
 
 dom.shakeSens.addEventListener('input', (e) => {
   const s = parseInt(e.target.value, 10);
@@ -555,7 +564,6 @@ function applySettings(s) {
   // sequence
   const seq = [3, 5, 6].includes(merged.sequenceMin) ? merged.sequenceMin : DEFAULTS.sequenceMin;
   state.durationMs = seq * 60 * 1000;
-  state.lastDisplayedSec = null;
   const seqEl = document.querySelector(`input[name="seq"][value="${seq}"]`);
   if (seqEl) seqEl.checked = true;
 
@@ -589,6 +597,7 @@ function applySettings(s) {
 }
 
 // ---------- start ----------
-preloadSpeech();
+preloadSync();
+ensureMasterAudio(); // start fetching the track immediately so play() is fast on first Start
 applySettings(loadSettings());
 render();

@@ -129,6 +129,61 @@ def encode_mp3(pcm: bytes, rate: int, dest: str) -> None:
         os.unlink(raw)
 
 
+# Cues placed at these track-time offsets (seconds) in the master file.
+# Race-start mark is at 360s; the track runs slightly longer so "Race
+# started!" finishes after that.
+MASTER_LAYOUT: list[tuple[str, float]] = [
+    ("minute_6",   0),
+    ("minute_5",  60),
+    ("minute_4", 120),
+    ("minute_3", 180),
+    ("minute_2", 240),
+    ("minute_1", 300),
+    ("sec_10",   350),
+    ("sec_9",    351),
+    ("sec_8",    352),
+    ("sec_7",    353),
+    ("sec_6",    354),
+    ("sec_5",    355),
+    ("sec_4",    356),
+    ("sec_3",    357),
+    ("sec_2",    358),
+    ("sec_1",    359),
+    ("go",       360),
+]
+
+
+def build_master(audio_dir: str) -> None:
+    """Mix the per-cue MP3s into one continuous master track."""
+    inputs: list[str] = []
+    for name, _ in MASTER_LAYOUT:
+        src = os.path.join(audio_dir, f"{name}.mp3")
+        if not os.path.exists(src):
+            sys.exit(f"missing cue {src} — generate it first")
+        inputs += ["-i", src]
+
+    chains = []
+    labels = []
+    for i, (_, offset_s) in enumerate(MASTER_LAYOUT):
+        ms = int(offset_s * 1000)
+        chains.append(f"[{i}:a]adelay={ms}|{ms}[a{i}]")
+        labels.append(f"[a{i}]")
+    filtergraph = ";".join(chains) + ";" + "".join(labels) + \
+        f"amix=inputs={len(MASTER_LAYOUT)}:duration=longest:normalize=0"
+
+    dest = os.path.join(audio_dir, "master.mp3")
+    print(f"  building master.mp3 from {len(MASTER_LAYOUT)} cues", flush=True)
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error",
+         *inputs,
+         "-filter_complex", filtergraph,
+         "-ac", "1", "-ar", "22050", "-b:a", "64k",
+         dest],
+        check=True,
+    )
+    print(f"  -> {os.path.getsize(dest)} bytes")
+
+
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--voice", default=DEFAULT_VOICE)
@@ -137,27 +192,34 @@ def main() -> int:
     p.add_argument("--out", default="audio")
     p.add_argument("--throttle", type=float, default=7.0,
                    help="seconds to sleep between API calls (Gemini TTS free tier is 10 req/min)")
+    p.add_argument("--master-only", action="store_true",
+                   help="skip TTS regeneration; just rebuild master.mp3 from existing cues")
+    p.add_argument("--no-master", action="store_true",
+                   help="generate cues but skip the master rebuild")
     args = p.parse_args()
 
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        sys.exit("GEMINI_API_KEY not set")
     if not shutil.which("ffmpeg"):
         sys.exit("ffmpeg not found on PATH")
 
-    os.makedirs(args.out, exist_ok=True)
-    targets = {k: PHRASES[k] for k in (args.only or PHRASES) if k in PHRASES}
+    if not args.master_only:
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            sys.exit("GEMINI_API_KEY not set")
+        os.makedirs(args.out, exist_ok=True)
+        targets = {k: PHRASES[k] for k in (args.only or PHRASES) if k in PHRASES}
+        items = list(targets.items())
+        for i, (name, text) in enumerate(items):
+            dest = os.path.join(args.out, f"{name}.mp3")
+            print(f"  {name:<10} {text!r}", end=" ", flush=True)
+            pcm, rate = synthesize(text, api_key=api_key, model=args.model, voice=args.voice)
+            encode_mp3(pcm, rate, dest)
+            size = os.path.getsize(dest)
+            print(f"-> {size} bytes")
+            if args.throttle > 0 and i < len(items) - 1:
+                time.sleep(args.throttle)
 
-    items = list(targets.items())
-    for i, (name, text) in enumerate(items):
-        dest = os.path.join(args.out, f"{name}.mp3")
-        print(f"  {name:<10} {text!r}", end=" ", flush=True)
-        pcm, rate = synthesize(text, api_key=api_key, model=args.model, voice=args.voice)
-        encode_mp3(pcm, rate, dest)
-        size = os.path.getsize(dest)
-        print(f"-> {size} bytes")
-        if args.throttle > 0 and i < len(items) - 1:
-            time.sleep(args.throttle)
+    if not args.no_master:
+        build_master(args.out)
 
     return 0
 
