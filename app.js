@@ -99,29 +99,73 @@ function beep({ freq = 880, duration = 0.15, volume = 0.4, type = 'sine' } = {})
 function vibrate(pattern) {
   if (navigator.vibrate) navigator.vibrate(pattern);
 }
-function signalMinute()  { beep({ freq: 660, duration: 0.25, volume: 0.5 }); vibrate(120); }
-function signalTick()    { beep({ freq: 880, duration: 0.08, volume: 0.35 }); vibrate(40); }
-function signalStart()   { beep({ freq: 440, duration: 0.9,  volume: 0.55, type: 'square' }); vibrate([300, 80, 300]); }
-// Sync confirmation: short two-tone ascending chirp. Distinct from minute/tick beeps.
-function signalSync() {
-  if (dom.sound.checked) {
-    const ctx = ensureAudio();
-    if (ctx) {
-      const t = ctx.currentTime;
-      for (const n of [{ f: 660, s: 0, d: 0.07 }, { f: 990, s: 0.08, d: 0.10 }]) {
-        const osc = ctx.createOscillator();
-        const g = ctx.createGain();
-        osc.type = 'sine';
-        osc.frequency.value = n.f;
-        osc.connect(g).connect(ctx.destination);
-        g.gain.setValueAtTime(0, t + n.s);
-        g.gain.linearRampToValueAtTime(0.4, t + n.s + 0.005);
-        g.gain.exponentialRampToValueAtTime(0.001, t + n.s + n.d);
-        osc.start(t + n.s);
-        osc.stop(t + n.s + n.d + 0.02);
-      }
-    }
+// Spoken cues: pre-rendered MP3 files. Each Audio element is preloaded once
+// and reused so playback is low-latency. Falls back to a synthesized beep if
+// the file is unavailable (e.g. before the service worker has cached it).
+const speechSrc = {
+  m6: 'audio/minute_6.mp3', m5: 'audio/minute_5.mp3',
+  m4: 'audio/minute_4.mp3', m3: 'audio/minute_3.mp3',
+  m2: 'audio/minute_2.mp3', m1: 'audio/minute_1.mp3',
+  s10: 'audio/sec_10.mp3',  s9: 'audio/sec_9.mp3',
+  s8:  'audio/sec_8.mp3',   s7: 'audio/sec_7.mp3',
+  s6:  'audio/sec_6.mp3',   s5: 'audio/sec_5.mp3',
+  s4:  'audio/sec_4.mp3',   s3: 'audio/sec_3.mp3',
+  s2:  'audio/sec_2.mp3',   s1: 'audio/sec_1.mp3',
+  go:  'audio/go.mp3',     sync: 'audio/sync.mp3',
+};
+const speech = {};
+function preloadSpeech() {
+  for (const [k, src] of Object.entries(speechSrc)) {
+    const a = new Audio(src);
+    a.preload = 'auto';
+    speech[k] = a;
   }
+}
+function speak(key, fallback) {
+  if (!dom.sound.checked) return;
+  const a = speech[key];
+  if (!a || a.error) { fallback && fallback(); return; }
+  try {
+    a.pause();
+    a.currentTime = 0;
+    const p = a.play();
+    if (p && p.catch) p.catch(() => fallback && fallback());
+  } catch { fallback && fallback(); }
+}
+
+function chirp() {
+  // Two-tone ascending chirp (used as fallback for sync).
+  const ctx = ensureAudio();
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  for (const n of [{ f: 660, s: 0, d: 0.07 }, { f: 990, s: 0.08, d: 0.10 }]) {
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = n.f;
+    osc.connect(g).connect(ctx.destination);
+    g.gain.setValueAtTime(0, t + n.s);
+    g.gain.linearRampToValueAtTime(0.4, t + n.s + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.001, t + n.s + n.d);
+    osc.start(t + n.s);
+    osc.stop(t + n.s + n.d + 0.02);
+  }
+}
+
+function signalMinute(min) {
+  speak(`m${min}`, () => beep({ freq: 660, duration: 0.25, volume: 0.5 }));
+  vibrate(120);
+}
+function signalTick(sec) {
+  speak(`s${sec}`, () => beep({ freq: 880, duration: 0.08, volume: 0.35 }));
+  vibrate(40);
+}
+function signalStart() {
+  speak('go', () => beep({ freq: 440, duration: 0.9, volume: 0.55, type: 'square' }));
+  vibrate([300, 80, 300]);
+}
+function signalSync() {
+  speak('sync', chirp);
   vibrate(60);
 }
 
@@ -152,7 +196,7 @@ function start() {
   ensureAudio(); // unlock for later programmatic playback
   state.zeroEpoch = Date.now() + state.durationMs;
   setPhase('countdown');
-  signalMinute(); // confirm start
+  signalMinute(Math.round(state.durationMs / 60000)); // confirm start with duration
   acquireWakeLock();
 }
 
@@ -238,8 +282,8 @@ function render() {
     if (state.lastDisplayedSec !== null && state.lastDisplayedSec > sec) {
       for (let s = state.lastDisplayedSec - 1; s >= sec && s >= 0; s--) {
         if (s === 0) continue; // start signal handled at transition
-        if (s > 0 && s % 60 === 0) signalMinute();
-        else if (s > 0 && s <= 10) signalTick();
+        if (s > 0 && s % 60 === 0) signalMinute(s / 60);
+        else if (s > 0 && s <= 10) signalTick(s);
       }
     }
     state.lastDisplayedSec = sec;
@@ -487,5 +531,6 @@ function applySettings(s) {
 }
 
 // ---------- start ----------
+preloadSpeech();
 applySettings(loadSettings());
 render();
