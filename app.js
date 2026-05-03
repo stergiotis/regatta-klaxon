@@ -59,6 +59,8 @@ const $ = (id) => document.getElementById(id);
 const dom = {
   app:        $('app'),
   status:     $('status'),
+  statusText: $('status-text'),
+  undo:       $('undo'),
   time:       $('time'),
   phase:      $('phase'),
   primary:    $('primary'),
@@ -228,6 +230,30 @@ function setupMediaSession() {
   } catch { /* unsupported actions are fine */ }
 }
 
+// ---------- haptic schedule ----------
+// Mirror the master-track cue grid as remaining-ms / vibration patterns so a
+// tactician with the phone in a pocket can feel the countdown without sound.
+const HAPTIC_MARKS = MASTER_CUE_OFFSETS.map(t => {
+  const rem = (MASTER_RACE_MARK_S - t) * 1000;
+  if (t === MASTER_RACE_MARK_S) return [rem, [500, 100, 500, 100, 500]]; // GO
+  if (t >= 350) return [rem, 80];                                        // last-10s ticks
+  return [rem, [300, 100, 300]];                                         // minute marks
+});
+let hapticTimers = [];
+function clearHaptics() {
+  for (const id of hapticTimers) clearTimeout(id);
+  hapticTimers = [];
+}
+function scheduleHaptics() {
+  clearHaptics();
+  if (state.phase !== 'countdown') return;
+  const now = Date.now();
+  for (const [rem, pattern] of HAPTIC_MARKS) {
+    const delay = state.zeroEpoch - rem - now;
+    if (delay >= 0) hapticTimers.push(setTimeout(() => vibrate(pattern), delay));
+  }
+}
+
 // ---------- core timing ----------
 function setPhase(next) {
   if (state.phase === next) return;
@@ -239,18 +265,24 @@ function syncToWholeMinute(label = 'Sync') {
   const now = Date.now();
   const remaining = state.zeroEpoch - now;
   const snapped = Math.round(remaining / 60000) * 60000;
+  const priorZeroEpoch = state.zeroEpoch;
   state.zeroEpoch = now + snapped;
   // Seek first so signalSync's cue-overlap check sees the new track position.
   seekMasterAudio();
+  scheduleHaptics();
   signalSync();
   flashSync(label);
+  if (priorZeroEpoch !== state.zeroEpoch) showUndo(priorZeroEpoch);
 }
 
 function adjustMinutes(delta) {
   if (state.phase !== 'countdown') return;
+  const priorZeroEpoch = state.zeroEpoch;
   state.zeroEpoch += delta * 60000;
   seekMasterAudio();
+  scheduleHaptics();
   flashSync(delta > 0 ? '+1 min' : '−1 min');
+  showUndo(priorZeroEpoch);
 }
 
 function start() {
@@ -260,6 +292,7 @@ function start() {
   setupMediaSession();
   startMasterAudio();
   acquireWakeLock();
+  scheduleHaptics();
 }
 
 function stopRacing() {
@@ -267,6 +300,8 @@ function stopRacing() {
   state.zeroEpoch = 0;
   stopMasterAudio();
   releaseWakeLock();
+  clearHaptics();
+  hideUndo();
 }
 
 function reset() {
@@ -274,16 +309,47 @@ function reset() {
   state.zeroEpoch = 0;
   stopMasterAudio();
   releaseWakeLock();
+  clearHaptics();
+  hideUndo();
 }
 
 function flashSync(label) {
-  dom.status.textContent = label;
+  dom.statusText.textContent = label;
   dom.app.classList.remove('sync-flash');
   // restart animation
   void dom.app.offsetWidth;
   dom.app.classList.add('sync-flash');
   clearTimeout(flashSync._t);
-  flashSync._t = setTimeout(() => { dom.status.textContent = ''; }, 1500);
+  flashSync._t = setTimeout(() => { dom.statusText.textContent = ''; }, 1500);
+}
+
+// ---------- undo last sync/adjust ----------
+// A wave slam can spuriously trigger shake-to-sync; a missed minute can be
+// over-corrected with ±1. Stash the previous zeroEpoch for ~5s so the user
+// can revert in one tap.
+const UNDO_WINDOW_MS = 5000;
+let undoStash = null;
+let undoHideTimer = null;
+function showUndo(priorZeroEpoch) {
+  undoStash = priorZeroEpoch;
+  dom.undo.hidden = false;
+  clearTimeout(undoHideTimer);
+  undoHideTimer = setTimeout(hideUndo, UNDO_WINDOW_MS);
+}
+function hideUndo() {
+  undoStash = null;
+  dom.undo.hidden = true;
+  clearTimeout(undoHideTimer);
+  undoHideTimer = null;
+}
+function performUndo() {
+  if (state.phase !== 'countdown' || undoStash == null) { hideUndo(); return; }
+  state.zeroEpoch = undoStash;
+  hideUndo();
+  seekMasterAudio();
+  scheduleHaptics();
+  vibrate(60);
+  flashSync('Undone');
 }
 
 // ---------- render loop ----------
@@ -308,6 +374,7 @@ function render() {
       // The master track plays "Race started!" at MASTER_RACE_MARK_S, so
       // we let it continue rather than triggering a separate cue here.
       setPhase('racing');
+      hideUndo();
       return render();
     }
     if      (remaining > 4 * 60000) phaseClass = 'phase-far';
@@ -533,6 +600,7 @@ dom.minus.addEventListener('click', () => adjustMinutes(-1));
 dom.plus.addEventListener('click',  () => adjustMinutes(+1));
 dom.stop.addEventListener('click',  reset);
 dom.reset.addEventListener('click', reset);
+dom.undo.addEventListener('click',  performUndo);
 
 dom.seq.forEach(r => r.addEventListener('change', (e) => {
   state.durationMs = parseInt(e.target.value, 10) * 60 * 1000;

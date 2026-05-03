@@ -15,7 +15,10 @@
 </head>
 <body>
   <main id="app" class="phase-idle" data-phase="idle">
-    <div class="status" id="status" aria-live="polite"></div>
+    <div class="status" id="status" aria-live="polite">
+      <span id="status-text"></span>
+      <button id="undo" class="undo-btn" type="button" hidden>Undo</button>
+    </div>
     <div class="time" id="time" role="timer" aria-live="off">5:00</div>
     <div class="phase" id="phase">Ready</div>
 

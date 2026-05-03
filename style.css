@@ -347,6 +347,28 @@ input[type="checkbox"], input[type="radio"] {
   width: 100%;
 }
 
+.undo-btn {
+  background: rgba(253, 231, 37, 0.2);
+  color: var(--fg);
+  border: 1px solid rgba(253, 231, 37, 0.4);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  padding: 0.3rem 0.7rem;
+  margin-left: 0.6rem;
+  border-radius: 0.5rem;
+  vertical-align: middle;
+  cursor: pointer;
+}
+.undo-btn[hidden] { display: none; }
+.phase-close .undo-btn,
+.phase-final .undo-btn {
+  background: rgba(68, 1, 84, 0.18);
+  color: var(--v0);
+  border-color: rgba(68, 1, 84, 0.4);
+}
+
 /* a brief flash when sync fires */
 .sync-flash {
   animation: flash 0.4s ease-out;
